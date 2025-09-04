@@ -53,9 +53,17 @@ class DeepWikiMCPClient:
             return self.mcp_available
 
         try:
-            async with self.session.get(
-                self.config.server_url.replace("/sse", "/health")
-            ) as response:
+            # Build health check URL for both SSE and MCP endpoints
+            health_url = self.config.server_url
+            if health_url.endswith("/sse"):
+                health_url = health_url.replace("/sse", "/health")
+            elif health_url.endswith("/mcp"):
+                health_url = health_url.replace("/mcp", "/health")
+            else:
+                # Fallback: append /health to base URL
+                health_url = health_url.rstrip("/") + "/health"
+
+            async with self.session.get(health_url) as response:
                 self.mcp_available = response.status == 200
         except:
             self.mcp_available = False

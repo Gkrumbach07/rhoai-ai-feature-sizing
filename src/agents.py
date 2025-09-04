@@ -265,6 +265,11 @@ class RFEAgentManager:
             print(f"⚠️  MCP research unavailable for {persona}")
             return {"research_available": False}
 
+        # Handle None or empty research_repos
+        if not research_repos:
+            print(f"⚠️  No research repositories provided for {persona}")
+            return {"research_available": False}
+
         print(f"🔬 Conducting MCP research for {persona}...")
 
         research_results = {"research_available": True, "repositories": {}}

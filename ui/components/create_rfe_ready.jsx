@@ -16,22 +16,70 @@ function CreateRFEButton({ event, onCreateRFE }) {
   
   if (!event) return null;
 
+  // Handle both direct event data and nested data structure
+  const eventData = event.data || event;
   const {
     message = "Ready to create RFE in Jira?",
     artifacts = [],
     rfe_content = "",
     refinement_content = ""
-  } = event;
+  } = eventData;
+
+  // Extract event data structure for compatibility
 
   const handleCreateRFE = async () => {
     setIsCreating(true);
+    
     try {
+      // Validate that we have the required content
+      if (!rfe_content && !refinement_content) {
+        console.warn('No RFE content available for creation');
+        alert('No RFE content is available. Please ensure artifacts have been generated.');
+        return;
+      }
+      
+      // Make direct API call to create RFE in Jira
+      const apiUrl = process.env.REACT_APP_API_URL || 'http://localhost:8001';
+      const response = await fetch(`${apiUrl}/api/create-rfe`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          rfe_content,
+          refinement_content,
+          issue_type: 'Story',
+          priority: 'Medium'
+        })
+      });
+      
+      const result = await response.json();
+      
+      if (result.success) {
+        alert(`RFE created successfully!\n\nIssue: ${result.issue_key}\n\nClick OK to open in Jira.`);
+        // Open Jira issue in new tab
+        if (result.issue_url) {
+          window.open(result.issue_url, '_blank');
+        }
+      } else {
+        console.error('RFE creation failed:', result);
+        alert(`Failed to create RFE: ${result.message || result.error || 'Unknown error'}`);
+      }
+      
+      // Call onCreateRFE callback if provided (for UI updates)
       if (onCreateRFE) {
         await onCreateRFE({
+          success: result.success,
+          issue_key: result.issue_key,
+          issue_url: result.issue_url,
           rfe_content,
           refinement_content
         });
       }
+      
+    } catch (error) {
+      console.error('Failed to create RFE:', error);
+      alert(`Failed to create RFE: ${error.message || 'Network error. Please check if the API server is running.'}`);
     } finally {
       setIsCreating(false);
     }
@@ -115,9 +163,16 @@ function CreateRFEButton({ event, onCreateRFE }) {
 
 export default function Component({ events, onCreateRFE }) {
   // Get the most recent create_rfe_ready event
-  const event = events && events.length > 0 
-    ? events.find(e => e.type === 'create_rfe_ready') || events[events.length - 1]
+  const createRFEEvent = events && events.length > 0 
+    ? events.find(e => e.type === 'create_rfe_ready')
     : null;
 
-  return <CreateRFEButton event={event} onCreateRFE={onCreateRFE} />;
+  // Only show the button if we have a create_rfe_ready event with valid data
+  // This ensures it only appears after artifacts are generated
+  if (!createRFEEvent) return null;
+  
+  const eventData = createRFEEvent.data || createRFEEvent;
+  const hasValidContent = eventData.rfe_content || eventData.refinement_content || (eventData.artifacts && eventData.artifacts.length > 0);
+  
+  return hasValidContent ? <CreateRFEButton event={createRFEEvent} onCreateRFE={onCreateRFE} /> : null;
 }

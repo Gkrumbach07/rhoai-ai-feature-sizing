@@ -22,6 +22,7 @@ from llama_index.core.chat_ui.models.artifact import (
     DocumentArtifactData,
 )
 from llama_index.core.chat_ui.events import UIEvent, ArtifactEvent
+from llama_index.core.prompts import PromptTemplate
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
 
@@ -110,31 +111,30 @@ class RFEBuilderWorkflow(Workflow):
         """Get research repository recommendations via LLM call"""
 
         research_prompt = f"""
-        Based on the following RFE (Request for Enhancement) description, recommend 2-4 GitHub repositories 
-        that would be most relevant for researching implementation approaches, best practices, and technical details.
-        
-        Focus on repositories that are:
-        - Directly related to the technology stack or domain mentioned
-        - Well-maintained and popular open source projects
-        - Likely to contain relevant patterns, implementations, or architectural approaches
-        - From established organizations or communities
-        
-        RFE Description:
-        {user_msg}
-        
-        Provide specific repository URLs and explain why each one would be valuable for research.
+        Based on the RFE description below, recommend 2-4 GitHub repositories for research.
+
+        RFE Description: {user_msg}
+
+        Provide complete, properly formatted GitHub URLs in your response.
+        Focus on well-known, actively maintained repositories from established organizations.
         """
 
         try:
-            response = await self.llm.astructured_predict(
-                ResearchRecommendations, research_prompt
+            prompt_template = PromptTemplate(research_prompt)
+            response = await Settings.llm.astructured_predict(
+                ResearchRecommendations, prompt_template
             )
 
-            # Extract just the URLs for the analyze_rfe_streaming call
-            repo_urls = [repo.url for repo in response.repositories]
-            print(f"🔬 Recommended research repositories: {repo_urls}")
+            if response and hasattr(response, "repositories") and response.repositories:
+                repo_urls = [
+                    repo.url for repo in response.repositories if repo.url.strip()
+                ]
+                if repo_urls:
+                    print(f"🔬 Recommended research repositories: {repo_urls}")
+                    return repo_urls
 
-            return repo_urls
+            print(f"⚠️ No valid repositories found in response")
+            return []
 
         except Exception as e:
             print(f"❌ Failed to get research repositories: {e}")
@@ -155,7 +155,7 @@ class RFEBuilderWorkflow(Workflow):
             "RESEARCH_SPECIALIST",
             "UX_RESEARCHER",
             "UX_FEATURE_LEAD",
-            "ENGINEERING_MANAGER", 
+            "ENGINEERING_MANAGER",
             "STAFF_ENGINEER",
             "TECHNICAL_WRITER",
             "UX_ARCHITECT",
