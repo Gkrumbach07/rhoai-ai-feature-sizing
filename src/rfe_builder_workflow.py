@@ -27,6 +27,7 @@ from dotenv import load_dotenv
 
 from src.settings import init_settings
 from src.agents import RFEAgentManager, get_agent_personas
+from src.prompts import get_prompt, PROMPT_NAMES
 
 
 class RFEPhase(str, Enum):
@@ -75,7 +76,7 @@ class RFEBuilderUIEventData(BaseModel):
 def create_rfe_builder_workflow() -> Workflow:
     load_dotenv()
     init_settings()
-    return RFEBuilderWorkflow(timeout=300.0)
+    return RFEBuilderWorkflow(timeout=10000.0)
 
 
 class RFEBuilderWorkflow(Workflow):
@@ -98,6 +99,7 @@ class RFEBuilderWorkflow(Workflow):
 
         # Filter to only include specific agents
         filtered_agents = {
+            "RESEARCH_SPECIALIST",
             "UX_RESEARCHER",
             "UX_FEATURE_LEAD",
             "ENGINEERING_MANAGER",
@@ -113,6 +115,9 @@ class RFEBuilderWorkflow(Workflow):
         }
 
         agent_insights = []
+
+        expected_agent_count = len(agent_personas)
+        completed_agents = 0
 
         if agent_personas:
             for persona_key, persona_config in agent_personas.items():
@@ -137,11 +142,15 @@ class RFEBuilderWorkflow(Workflow):
 
                         if stream_event.get("type") == "complete":
                             agent_insights.append(stream_event.get("result"))
+                            completed_agents += 1
                 except Exception as e:
                     print(f"Agent {persona_key} error: {e}")
+                    completed_agents += (
+                        1  # Count failed agents as completed to avoid hanging
+                    )
 
-        # Small delay to ensure agent completion events are processed first
-        await asyncio.sleep(0.5)
+        # Wait a bit longer to ensure all UI events are processed
+        await asyncio.sleep(1.0)
 
         # Summarize all agent analyses
         if agent_insights:
@@ -150,7 +159,18 @@ class RFEBuilderWorkflow(Workflow):
         # Build final RFE from insights
         final_rfe = await self._build_final_rfe(user_msg, agent_insights)
 
-        return GenerateArtifactsEvent(final_rfe=final_rfe, context={})
+        return GenerateArtifactsEvent(
+            final_rfe=final_rfe,
+            context={
+                "agent_analyses": "\n".join(
+                    [
+                        f"**{insight.get('persona', 'Agent')}:** {insight.get('analysis', 'No analysis')}"
+                        for insight in agent_insights
+                        if insight
+                    ]
+                )
+            },
+        )
 
     @step
     async def generate_phase_1_artifacts(
@@ -174,7 +194,9 @@ class RFEBuilderWorkflow(Workflow):
 
         # Generate only Phase 1 artifacts
         for artifact_type, display_name in PHASE_1_ARTIFACTS:
-            content = await self._generate_simple_artifact(artifact_type, ev.final_rfe)
+            content = await self._generate_simple_artifact(
+                artifact_type, ev.final_rfe, ev.context
+            )
             phase_1_artifacts[artifact_type.value] = content
 
             # Emit artifact
@@ -236,6 +258,9 @@ class RFEBuilderWorkflow(Workflow):
     ) -> None:
         """Summarize all agent analyses and stream as plain text to UI"""
 
+        # Additional delay to ensure this appears after agents
+        await asyncio.sleep(0.5)
+
         # Create summary prompt
         insights_text = "\n\n".join(
             [
@@ -258,14 +283,16 @@ class RFEBuilderWorkflow(Workflow):
         Provide a clear, structured summary in markdown format.
         """
 
-        # Stream the summary generation
+        # Stream the summary generation with later timestamp
+        current_time = int(time.time() * 1000)
         ctx.write_event_to_stream(
             UIEvent(
                 type="agent_analysis_summary",
                 data={
                     "status": "generating",
                     "message": "Synthesizing insights from all agent analyses...",
-                    "timestamp": int(time.time() * 1000),  # milliseconds
+                    "timestamp": current_time
+                    + 2000,  # Add 2 seconds to ensure later ordering
                 },
             )
         )
@@ -275,7 +302,7 @@ class RFEBuilderWorkflow(Workflow):
             accumulated_text = ""
             char_count = 0
 
-            async for chunk in self.llm.astream_complete(summary_prompt):
+            async for chunk in await self.llm.astream_complete(summary_prompt):
                 accumulated_text += chunk.delta
                 char_count += len(chunk.delta)
 
@@ -288,7 +315,8 @@ class RFEBuilderWorkflow(Workflow):
                                 "status": "streaming",
                                 "summary": accumulated_text,
                                 "message": "Generating analysis summary...",
-                                "timestamp": int(time.time() * 1000),
+                                "timestamp": current_time
+                                + 2500,  # Even later for streaming updates
                             },
                         )
                     )
@@ -302,7 +330,8 @@ class RFEBuilderWorkflow(Workflow):
                         "status": "complete",
                         "summary": accumulated_text.strip(),
                         "message": "Agent analysis summary complete",
-                        "timestamp": int(time.time() * 1000),
+                        "timestamp": current_time
+                        + 3000,  # Latest timestamp for completion
                     },
                 )
             )
@@ -313,7 +342,8 @@ class RFEBuilderWorkflow(Workflow):
                     data={
                         "status": "error",
                         "message": f"Failed to generate summary: {str(e)}",
-                        "timestamp": int(time.time() * 1000),
+                        "timestamp": current_time
+                        + 3000,  # Same late timestamp for error
                     },
                 )
             )
@@ -348,18 +378,39 @@ class RFEBuilderWorkflow(Workflow):
         return response.text.strip()
 
     async def _generate_simple_artifact(
-        self, artifact_type: RFEArtifactType, final_rfe: str
+        self,
+        artifact_type: RFEArtifactType,
+        final_rfe: str,
+        context: Dict[str, Any] = None,
     ) -> str:
-        """Simple artifact generation"""
+        """Generate artifact using proper prompt templates"""
 
-        artifact_prompts = {
-            RFEArtifactType.RFE_DESCRIPTION: f"Create a detailed RFE document based on: {final_rfe}",
-            RFEArtifactType.FEATURE_REFINEMENT: f"Create a feature breakdown document based on: {final_rfe}",
-            RFEArtifactType.ARCHITECTURE: f"Create a system architecture document based on: {final_rfe}",
-            RFEArtifactType.EPICS_STORIES: f"Create epics and user stories based on: {final_rfe}",
+        # Map artifact types to prompt template names
+        artifact_to_prompt = {
+            RFEArtifactType.RFE_DESCRIPTION: PROMPT_NAMES.RFE_DOCUMENT,
+            RFEArtifactType.FEATURE_REFINEMENT: PROMPT_NAMES.FEATURE_REFINEMENT,
+            RFEArtifactType.ARCHITECTURE: PROMPT_NAMES.ARCHITECTURE_DIAGRAM,
+            RFEArtifactType.EPICS_STORIES: PROMPT_NAMES.EPICS_STORIES,
         }
 
-        prompt = artifact_prompts[artifact_type]
+        # Get the prompt template name
+        prompt_name = artifact_to_prompt[artifact_type]
+
+        # Prepare template variables
+        template_variables = {
+            "rfe_description": final_rfe,
+            "agent_analyses": context.get("agent_analyses", "") if context else "",
+            "synthesis": context.get("synthesis", "") if context else "",
+            "component_teams": context.get("component_teams", "") if context else "",
+            "architecture": context.get("architecture", "") if context else "",
+            "epics_stories": context.get("epics_stories", "") if context else "",
+            "timeline": context.get("timeline", "") if context else "",
+        }
+
+        # Load and render the prompt template
+        prompt = get_prompt(prompt_name, template_variables)
+
+        # Generate the artifact
         response = await self.llm.acomplete(prompt)
         return response.text.strip()
 

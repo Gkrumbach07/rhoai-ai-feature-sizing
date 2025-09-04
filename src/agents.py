@@ -12,6 +12,8 @@ from llama_index.core.settings import Settings
 from llama_index.core.prompts import PromptTemplate
 
 from src.prompts import get_prompt, PROMPT_NAMES
+from src.mcp_client import MCPResearchService, get_mcp_config
+from src.settings import get_mcp_settings
 
 
 # Simple streaming helper - returns final result directly
@@ -167,12 +169,14 @@ class Architecture(BaseModel):
 
 
 class RFEAgentManager:
-    """Manages multi-agent RFE analysis"""
+    """Manages multi-agent RFE analysis with MCP research support"""
 
     def __init__(self):
         self.indices: Dict[str, VectorStoreIndex] = {}
         self.agent_configs: Dict[str, Dict] = {}
+        self.mcp_research_service: Optional[MCPResearchService] = None
         self.load_agent_configurations()
+        self._initialize_mcp_service()
 
     def load_agent_configurations(self):
         """Load agent configs from YAML files"""
@@ -234,17 +238,124 @@ class RFEAgentManager:
         print(f"⚠️  No index found for {persona}")
         return None
 
+    def _initialize_mcp_service(self):
+        """Initialize MCP research service if enabled"""
+        mcp_config = get_mcp_settings()
+        if mcp_config:
+            self.mcp_research_service = MCPResearchService(mcp_config)
+            print("🌐 MCP research service initialized")
+        else:
+            print("⚠️  MCP research service disabled")
+
+    async def conduct_mcp_research(
+        self, persona: str, rfe_description: str, research_repos: List[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Conduct MCP-based research for an agent persona
+
+        Args:
+            persona: Agent persona (e.g., "STAFF_ENGINEER")
+            rfe_description: RFE description to research
+            research_repos: List of GitHub repository URLs to research
+
+        Returns:
+            Research results dictionary
+        """
+        if not self.mcp_research_service:
+            print(f"⚠️  MCP research unavailable for {persona}")
+            return {"research_available": False}
+
+        if not research_repos:
+            # Default repositories for Red Hat OpenShift AI research
+            research_repos = [
+                "https://github.com/kubeflow/kubeflow",
+                "https://github.com/kserve/kserve",
+                "https://github.com/kubeflow/training-operator",
+                "https://github.com/opendatahub-io/opendatahub-operator",
+            ]
+
+        print(f"🔬 Conducting MCP research for {persona}...")
+
+        research_results = {"research_available": True, "repositories": {}}
+
+        for repo_url in research_repos:
+            try:
+                repo_research = await self.mcp_research_service.focused_research(
+                    repo_url, persona, rfe_description
+                )
+                research_results["repositories"][repo_url] = repo_research
+                print(f"✅ Completed research for {repo_url}")
+            except Exception as e:
+                print(f"❌ Research failed for {repo_url}: {e}")
+                research_results["repositories"][repo_url] = {"error": str(e)}
+
+        return research_results
+
     async def analyze_rfe_streaming(
-        self, persona: str, rfe_description: str, config: Dict[str, Any]
+        self,
+        persona: str,
+        rfe_description: str,
+        config: Dict[str, Any],
+        research_repos: List[str] = None,
     ) -> AsyncGenerator[Dict[str, Any], None]:
-        """Simple streaming RFE analysis"""
+        """Enhanced streaming RFE analysis with optional MCP research"""
         print(f"🔍 {persona} starting streaming analysis...")
+
+        # Conduct MCP research if available and enabled
+        research_context = ""
+        if self.mcp_research_service and config.get("enable_mcp_research", True):
+            try:
+                yield {
+                    "type": "research_started",
+                    "persona": persona,
+                    "message": "Conducting repository research...",
+                }
+
+                research_results = await self.conduct_mcp_research(
+                    persona, rfe_description, research_repos
+                )
+
+                if research_results["research_available"]:
+                    # Summarize research results for context
+                    research_summaries = []
+                    for repo_url, repo_data in research_results["repositories"].items():
+                        if "error" not in repo_data:
+                            qa_results = repo_data.get("qa_results", {})
+                            summary = f"Repository: {repo_url}\n"
+                            for question, answer in qa_results.items():
+                                if answer.strip():
+                                    summary += (
+                                        f"Q: {question}\nA: {answer[:300]}...\n\n"
+                                    )
+                            research_summaries.append(summary)
+
+                    research_context = "RESEARCH FINDINGS:\n" + "\n".join(
+                        research_summaries
+                    )
+
+                    yield {
+                        "type": "research_completed",
+                        "persona": persona,
+                        "research_data": research_results,
+                    }
+
+            except Exception as e:
+                print(f"❌ Research error for {persona}: {e}")
+                research_context = "Research unavailable due to error."
+
+        # Combine traditional knowledge base context with research
+        traditional_context = "No specific knowledge base available."
+        full_context = (
+            f"{traditional_context}\n\n{research_context}"
+            if research_context
+            else traditional_context
+        )
 
         prompt = get_prompt(
             PROMPT_NAMES.AGENT_ANALYSIS,
             {
                 "rfe_description": rfe_description,
-                "context": "No specific knowledge base available.",
+                "context": full_context,
                 "persona": config.get("name", persona),
             },
         )

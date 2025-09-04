@@ -5,6 +5,8 @@ from llama_index.core.settings import Settings
 from llama_index.core.llms import LLM
 from llama_index.core.embeddings import BaseEmbedding
 
+from .mcp_client import MCPConfig, get_mcp_config
+
 
 class ProviderRegistry:
     """Registry for LLM and embedding providers using configuration-driven approach"""
@@ -118,6 +120,7 @@ def init_settings(
     embedding_provider: Optional[str] = None,
     llm_config: Optional[Dict[str, Any]] = None,
     embedding_config: Optional[Dict[str, Any]] = None,
+    enable_mcp: bool = True,
     **global_settings,
 ) -> None:
     """Initialize LlamaIndex settings with minimal configuration"""
@@ -140,3 +143,14 @@ def init_settings(
     Settings.chunk_overlap = global_settings.get(
         "chunk_overlap", int(os.getenv("CHUNK_OVERLAP", "50"))
     )
+
+    # Initialize MCP settings if enabled
+    if enable_mcp and os.getenv("ENABLE_DEEPWIKI_MCP", "true").lower() == "true":
+        Settings.mcp_config = get_mcp_config()
+    else:
+        Settings.mcp_config = None
+
+
+def get_mcp_settings() -> Optional[MCPConfig]:
+    """Get MCP configuration from Settings"""
+    return getattr(Settings, "mcp_config", None)

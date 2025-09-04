@@ -41,7 +41,7 @@ from dotenv import load_dotenv
 def create_jira_rfe_to_architecture_workflow() -> Workflow:
     load_dotenv()
     init_settings()
-    return JiraRFEToArchitectureWorkflow(timeout=300.0)
+    return JiraRFEToArchitectureWorkflow(timeout=10000.0)
 
 
 class JiraRFEInput(BaseModel):

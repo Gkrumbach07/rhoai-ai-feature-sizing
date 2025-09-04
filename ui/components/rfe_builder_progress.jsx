@@ -95,7 +95,7 @@ function SimpleProgressCard({ event }) {
               <Lightbulb className="h-4 w-4 text-purple-600" />
               <div className="text-sm text-purple-800">
                 {phase === 'phase_1_ready' 
-                  ? "Phase 1 complete! Chat to refine, or continue to Phase 2 for Architecture & Epics."
+                  ? "Generation complete!Chat to refine."
                   : "All artifacts ready! Chat to make changes."
                 }
               </div>
