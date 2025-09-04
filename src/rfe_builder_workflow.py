@@ -102,10 +102,11 @@ class RFEBuilderWorkflow(Workflow):
             "RESEARCH_SPECIALIST",
             "UX_RESEARCHER",
             "UX_FEATURE_LEAD",
-            "ENGINEERING_MANAGER",
+            "ENGINEERING_MANAGER", 
             "STAFF_ENGINEER",
             "TECHNICAL_WRITER",
             "UX_ARCHITECT",
+            "PRODUCT_MANAGER",
         }
 
         agent_personas = {
