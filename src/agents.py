@@ -265,15 +265,6 @@ class RFEAgentManager:
             print(f"⚠️  MCP research unavailable for {persona}")
             return {"research_available": False}
 
-        if not research_repos:
-            # Default repositories for Red Hat OpenShift AI research
-            research_repos = [
-                "https://github.com/kubeflow/kubeflow",
-                "https://github.com/kserve/kserve",
-                "https://github.com/kubeflow/training-operator",
-                "https://github.com/opendatahub-io/opendatahub-operator",
-            ]
-
         print(f"🔬 Conducting MCP research for {persona}...")
 
         research_results = {"research_available": True, "repositories": {}}

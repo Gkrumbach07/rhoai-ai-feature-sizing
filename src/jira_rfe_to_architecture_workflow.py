@@ -132,10 +132,11 @@ class JiraRFEToArchitectureWorkflow(Workflow):
                 for k, v in agent_personas.items()
                 if k
                 in [
-                    "backend_eng",
-                    "frontend_eng",
-                    "architect",
-                    "uxd",
+                    "STAFF_ENGINEER",
+                    "ENGINEERING_MANAGER",
+                    "TEAM_LEAD",
+                    "UX_ARCHITECT",
+                    "PXE",
                 ]  # Focus on implementation agents
             }
 

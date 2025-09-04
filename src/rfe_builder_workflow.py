@@ -30,6 +30,25 @@ from src.agents import RFEAgentManager, get_agent_personas
 from src.prompts import get_prompt, PROMPT_NAMES
 
 
+class ResearchRepository(BaseModel):
+    """Structure for a research repository recommendation"""
+
+    url: str = Field(description="GitHub repository URL")
+    relevance: str = Field(description="Why this repository is relevant to the RFE")
+    focus_areas: List[str] = Field(
+        description="Specific areas or components to focus on"
+    )
+
+
+class ResearchRecommendations(BaseModel):
+    """Structure for research repository recommendations"""
+
+    repositories: List[ResearchRepository] = Field(
+        description="List of recommended repositories to research"
+    )
+    reasoning: str = Field(description="Overall reasoning for these repository choices")
+
+
 class RFEPhase(str, Enum):
     BUILDING = "building"
     GENERATING_PHASE_1 = "generating_phase_1"
@@ -87,6 +106,40 @@ class RFEBuilderWorkflow(Workflow):
         self.llm: LLM = Settings.llm
         self.agent_manager = RFEAgentManager()
 
+    async def _get_research_repositories(self, user_msg: str) -> List[str]:
+        """Get research repository recommendations via LLM call"""
+
+        research_prompt = f"""
+        Based on the following RFE (Request for Enhancement) description, recommend 2-4 GitHub repositories 
+        that would be most relevant for researching implementation approaches, best practices, and technical details.
+        
+        Focus on repositories that are:
+        - Directly related to the technology stack or domain mentioned
+        - Well-maintained and popular open source projects
+        - Likely to contain relevant patterns, implementations, or architectural approaches
+        - From established organizations or communities
+        
+        RFE Description:
+        {user_msg}
+        
+        Provide specific repository URLs and explain why each one would be valuable for research.
+        """
+
+        try:
+            response = await self.llm.astructured_predict(
+                ResearchRecommendations, research_prompt
+            )
+
+            # Extract just the URLs for the analyze_rfe_streaming call
+            repo_urls = [repo.url for repo in response.repositories]
+            print(f"🔬 Recommended research repositories: {repo_urls}")
+
+            return repo_urls
+
+        except Exception as e:
+            print(f"❌ Failed to get research repositories: {e}")
+            return []
+
     @step
     async def start_rfe_builder(
         self, ctx: Context, ev: StartEvent
@@ -115,6 +168,9 @@ class RFEBuilderWorkflow(Workflow):
             if key in filtered_agents
         }
 
+        # Get research repository recommendations
+        research_repos = await self._get_research_repositories(user_msg)
+
         agent_insights = []
 
         expected_agent_count = len(agent_personas)
@@ -124,7 +180,7 @@ class RFEBuilderWorkflow(Workflow):
             for persona_key, persona_config in agent_personas.items():
                 try:
                     async for stream_event in self.agent_manager.analyze_rfe_streaming(
-                        persona_key, user_msg, persona_config
+                        persona_key, user_msg, persona_config, research_repos
                     ):
                         # Forward agent events to multi-agent component
                         ctx.write_event_to_stream(
