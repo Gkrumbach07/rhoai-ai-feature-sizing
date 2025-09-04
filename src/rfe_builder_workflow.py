@@ -351,28 +351,26 @@ class RFEBuilderWorkflow(Workflow):
     async def _build_final_rfe(
         self, user_input: str, agent_insights: List[Dict]
     ) -> str:
-        """Simple RFE building from user input and agent insights"""
+        """Build RFE using the proper rfe-document.md template"""
 
+        # Format agent insights for the template
         insights_text = "\n".join(
             [
-                f"{insight.get('persona', 'Agent')}: {insight.get('analysis', 'No analysis')}"
+                f"**{insight.get('persona', 'Agent')}:** {insight.get('analysis', 'No analysis')}"
                 for insight in agent_insights
                 if insight
             ]
         )
 
-        prompt = f"""
-        Create a clear RFE (Request for Enhancement) document based on:
-        
-        User idea: {user_input}
-        Agent analysis: {insights_text}
-        
-        Include:
-        - Problem statement
-        - Proposed solution  
-        - Requirements
-        - Success criteria
-        """
+        # Prepare template variables
+        template_variables = {
+            "rfe_description": user_input,
+            "agent_analyses": insights_text,
+            "synthesis": "",  # No synthesis yet at this stage
+        }
+
+        # Use the proper RFE document template
+        prompt = get_prompt(PROMPT_NAMES.RFE_DOCUMENT, template_variables)
 
         response = await self.llm.acomplete(prompt)
         return response.text.strip()
